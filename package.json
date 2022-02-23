@@ -1,0 +1,8 @@
+{
+    "name": "nodejs-aula-1",
+    "description": "Exercicio 1 de Nodejs",
+    "version": "1.0.0",
+    "engines": {
+      "node": "16.x"
+    }
+  }
