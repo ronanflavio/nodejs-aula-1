@@ -90,8 +90,8 @@ app.get('/api/produtos/:id', checkToken, (req, res) => {
 app.post('/api/produtos', checkToken, isAdmin, (req, res) => {
     let body = req.body;
     let erro = validarProduto(body);
-    if (erro.length > 0) {
-        return res.status(422).json();
+    if (erro.erros.length > 0) {
+        return res.status(422).json(erro);
     }
     let produto = setProduto(body);
     knex.insert(produto)
@@ -108,8 +108,8 @@ app.put('/api/produtos/:id', checkToken, isAdmin, (req, res) => {
     let id = req.params.id;
     let body = req.body;
     let erro = validarProduto(body);
-    if (erro.length > 0) {
-        return res.json(erro, 422);
+    if (erro.erros.length > 0) {
+        return res.status(422).json(erro);
     }
     produto = setProduto(body);
     knex('produto')
@@ -142,6 +142,10 @@ app.delete('/api/produtos/:id', checkToken, isAdmin, (req, res) => {
 
  app.post('/api/seguranca/registrar', (req, res) => {
     let body = req.body;
+    let erro = validarUsuario(body);
+    if (erro.erros.length > 0) {
+        return res.status(422).json(erro);
+    }
     let usuario = setUsuario(body);
     knex.insert(usuario)
         .into('usuario')
@@ -191,18 +195,39 @@ app.listen(port, () => {
 });
 
 function validarProduto(body) {
-    let erro = [];
+    let erro = {
+        erros: []
+    };
     if (!body['descricao']) {
-        erro.push('O campo "descricao" é obrigatório.');
+        erro.erros.push({descricao: 'O campo descricao é obrigatório.'});
     }
     if (!body['valor']) {
-        erro.push('O campo "valor" é obrigatório.');
+        erro.erros.push({valor: 'O campo valor é obrigatório.'});
     }
     if (!body['marca']) {
-        erro.push('O campo "marca" é obrigatório.');
+        erro.erros.push({marca: 'O campo marca é obrigatório.'});
     }
     return erro;
-};
+}
+
+function validarUsuario(body) {
+    let erro = {
+        erros: []
+    };
+    if (!body['nome']) {
+        erro.erros.push({nome: 'O campo nome é obrigatório'});
+    }
+    if (!body['email']) {
+        erro.erros.push({email: 'O campo email é obrigatório'});
+    }
+    if (!body['login']) {
+        erro.erros.push({login: 'O campo login é obrigatório'});
+    }
+    if (!body['senha']) {
+        erro.erros.push({senha: 'O campo senha é obrigatório'});
+    }
+    return erro;
+}
 
 function setProduto(dados, produto = null) {
     if (!produto) {
