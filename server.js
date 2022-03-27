@@ -1,18 +1,56 @@
+require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const knex = require('knex')({
+    client: 'pg',
+    debug: true,
+    connection: {
+        connectionString: process.env.DATABASE_URL,
+        ssl: { rejectUnauthorized: false },
+    }
+});
 
 const app = express();
 const port = process.env.PORT || 5000;
 
-const lista_produtos = {
-    produtos: [
-        { id: 1, descricao: "Arroz parboilizado 5Kg", valor: 25.00, marca: "Tio João"  },
-        { id: 2, descricao: "Maionese 250gr", valor: 7.20, marca: "Helmans"  },
-        { id: 3, descricao: "Iogurte Natural 200ml", valor: 2.50, marca: "Itambé"  },
-        { id: 4, descricao: "Batata Maior Palha 300gr", valor: 15.20, marca: "Chipps"  },
-        { id: 5, descricao: "Nescau 400gr", valor: 8.00, marca: "Nestlé"  },
-    ]
-};
+const checkToken = (req, res, next) => {
+    let authToken = req.headers['authorization'];
+    if (!authToken) {
+        return res.status(401).json({message: 'Autenticação requerida'});
+    }
+    let token = authToken.split(' ')[1];
+    req.token = token;
+    jwt.verify(req.token, process.env.SECRET_KEY, (err, tokenDecodificado) => {
+        if (err) {
+            return res.status(401).json({message: 'Acesso negado'});
+        }
+        req.usuarioId = tokenDecodificado.id;
+        return next();
+    });
+}
+
+const isAdmin = (req, res, next) => {
+    knex.select('*')
+        .from('usuario')
+        .where({id: req.usuarioId})
+        .then((usuarios) => {
+            if (usuarios.length) {
+                let usuario = usuarios[0];
+                let roles = usuario.roles.split(';');
+                if (roles.includes('ADMIN')) {
+                    return next();
+                }
+                return res.status(403).json({message: 'Você não tem permissões suficientes para executar esta ação.'});
+            }
+        })
+        .catch(err => {
+            res.status(500).json({
+                message: 'Erro ao recuperar permissões de usuário - ' + err.message
+            });
+        })
+}
 
 app.set('views', './src/views');
 app.set('view engine','ejs');
@@ -24,70 +62,135 @@ app.get('/', (req, res) => {
     res.render('index');
 });
 
-app.get('/produtos', (req, res) => {
-    return res.json(lista_produtos.produtos);
+/**
+ * Rotas de produtos
+ */
+
+app.get('/api/produtos', checkToken, (req, res) => {
+    knex.select('*').from('produto')
+        .then(response => res.status(200).json(response))
+        .catch(err => {
+            res.status(500).json({
+                message: 'Erro ao recuperar produtos - ' + err.message
+            });
+        });
 });
 
-app.get('/produtos/:id', (req, res) => {
+app.get('/api/produtos/:id', checkToken, (req, res) => {
     let id = req.params.id;
-    let resposta = lista_produtos.produtos.find(f => f.id == id);
-    if (resposta) {
-        return res.json(resposta);
-    }
-    return res.status(404).json('Item não encontrado.');
+    knex.select('*').from('produto').where({id: id})
+        .then(response => res.status(200).json(response[0]))
+        .catch(err => {
+            res.status(404).json({
+                message: 'Erro ao recuperar produto: ' + err.message
+            });
+        });
 });
 
-app.post('/produtos', (req, res) => {
+app.post('/api/produtos', checkToken, isAdmin, (req, res) => {
     let body = req.body;
-    let erro = validarRequisicao(body);
+    let erro = validarProduto(body);
     if (erro.length > 0) {
         return res.status(422).json();
     }
-    let maiorId = Math.max.apply(Math, lista_produtos.produtos.map((p) => p.id));
-    let produto = {
-        id: maiorId ? maiorId + 1 : 1,
-        descricao: body.descricao,
-        valor: body.valor,
-        marca: body.marca
-    };
-    lista_produtos.produtos.push(produto);
-    return res.status(201).json();
+    let produto = setProduto(body);
+    knex.insert(produto)
+        .into('produto')
+        .then(response => res.status(201).json())
+        .catch(err => {
+            res.status(404).json({
+                message: 'Erro ao processar produto: ' + err.message
+            });
+        });
 });
 
-app.put('/produtos/:id', (req, res) => {
+app.put('/api/produtos/:id', checkToken, isAdmin, (req, res) => {
     let id = req.params.id;
-    let produto = lista_produtos.produtos.find(f => f.id == id);
-    if (!produto) {
-        return res.json('Item não encontrado.', 404);
-    }
     let body = req.body;
-    let erro = validarRequisicao(body);
+    let erro = validarProduto(body);
     if (erro.length > 0) {
         return res.json(erro, 422);
     }
-    produto.descricao = body.descricao;
-    produto.valor = body.valor;
-    produto.marca = body.marca;
-    let index = lista_produtos.produtos.findIndex(obj => obj.id === produto.id);
-    lista_produtos.produtos[index] = produto;
-    res.status(200).json();
+    produto = setProduto(body);
+    knex('produto')
+        .where({id: id})
+        .update(produto)
+        .then(response => res.status(200).json())
+        .catch(err => {
+            res.status(404).json({
+                message: 'Erro ao processar produto: ' + err.message
+            });
+        });
 });
 
-app.delete('/produtos/:id', (req, res) => {
+app.delete('/api/produtos/:id', checkToken, isAdmin, (req, res) => {
     let id = parseInt(req.params.id);
-    let index = lista_produtos.produtos.findIndex(obj => obj.id === id);
-    if (index < 0) {
-        return res.status(404).json('Item não encontrado.');
-    }
-    lista_produtos.produtos.splice(index, 1);
-    return res.json();
+    knex('produto')
+        .where({id: id})
+        .delete()
+        .then(response => res.status(200).json())
+        .catch(err => {
+            res.status(404).json({
+                message: 'Erro ao processar produto: ' + err.message
+            });
+        });
+});
+
+/**
+ * Rotas de segurança
+ */
+
+ app.post('/api/seguranca/registrar', (req, res) => {
+    let body = req.body;
+    let usuario = setUsuario(body);
+    knex.insert(usuario)
+        .into('usuario')
+        .then(response => res.status(201).json())
+        .catch(err => {
+            res.status(404).json({
+                message: 'Erro ao processar usuário: ' + err.message
+            });
+        });
+});
+
+app.post('/api/seguranca/login', (req, res) => {
+    let body = req.body;
+    knex.select('*')
+        .from('usuario')
+        .where({login: body.login})
+        .then(usuarios => {
+            if (usuarios.length) {
+                let usuario = usuarios[0];
+                let senhaCorreta = bcrypt.compareSync(body.senha, usuario.senha);
+                if (senhaCorreta) {
+                    let token = jwt.sign(
+                        {id: usuario.id},
+                        process.env.SECRET_KEY,
+                        {expiresIn: 3600}
+                    );
+                    return res.status(200).json({
+                        id: usuario.id,
+                        login: usuario.login,
+                        nome: usuario.nome,
+                        roles: usuario.roles,
+                        token: token
+                    });
+                }
+            }
+            res.status(422).json({message: 'Usuário ou senha inválidos.'});
+        })
+        .catch(err => {
+            res.status(404).json({
+                message: 'Erro ao processar login: ' + err.message
+            });
+        });
 });
 
 app.listen(port, () => {
     console.log(`Listen on port ${port}`)
 });
 
-function validarRequisicao(body) {
+function validarProduto(body) {
     let erro = [];
     if (!body['descricao']) {
         erro.push('O campo "descricao" é obrigatório.');
@@ -100,3 +203,24 @@ function validarRequisicao(body) {
     }
     return erro;
 };
+
+function setProduto(dados, produto = null) {
+    if (!produto) {
+        produto = {};
+    }
+    produto.descricao = dados.descricao;
+    produto.valor = dados.valor;
+    produto.marca = dados.marca;
+    return produto;
+}
+
+function setUsuario(dados, usuario = null) {
+    if (!usuario) {
+        usuario = {};
+    }
+    usuario.nome = dados.nome;
+    usuario.email = dados.email;
+    usuario.login = dados.login;
+    usuario.senha = bcrypt.hashSync(dados.senha, 8);
+    return usuario;
+}
