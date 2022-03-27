@@ -159,6 +159,10 @@ app.delete('/api/produtos/:id', checkToken, isAdmin, (req, res) => {
 
 app.post('/api/seguranca/login', (req, res) => {
     let body = req.body;
+    let erro = validarLogin(body);
+    if (erro.erros.length > 0) {
+        return res.status(422).json(erro);
+    }
     knex.select('*')
         .from('usuario')
         .where({login: body.login})
@@ -220,6 +224,19 @@ function validarUsuario(body) {
     if (!body['email']) {
         erro.erros.push({email: 'O campo email é obrigatório'});
     }
+    if (!body['login']) {
+        erro.erros.push({login: 'O campo login é obrigatório'});
+    }
+    if (!body['senha']) {
+        erro.erros.push({senha: 'O campo senha é obrigatório'});
+    }
+    return erro;
+}
+
+function validarLogin(body) {
+    let erro = {
+        erros: []
+    };
     if (!body['login']) {
         erro.erros.push({login: 'O campo login é obrigatório'});
     }
